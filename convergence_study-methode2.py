@@ -24,7 +24,7 @@ sdisc_nref = 8
 
 # --- Auxiliaries ---
 pi_1 = 2 * nuhS / (1 - 2 * nuhS)
-ktD_tilde = 1.0
+ktD_tilde = 1.0e-3
 
 
 # Interpolate ufl-function into dolfinx-function
@@ -96,7 +96,7 @@ def calculate_error(uh, u_ex, norm="l2", degree_raise=3):
     return np.sqrt(error_global / ref_val_global)
 
 
-def calculate_error_ufl(uh, u_ex, norm="l2", degree_raise=3):
+def calculate_error_ufl(uh, u_ex, norm="l2"):
     # The mesh
     domain = uh.function_space.mesh
     sdim = domain.topology.dim
@@ -131,13 +131,13 @@ def calculate_error_ufl(uh, u_ex, norm="l2", degree_raise=3):
     return np.sqrt(error_global / ref_val_global)
 
 
-def calculate_stress_error(sigh, u_ex, p_ex, pi_1, norm="l2", degree_raise=3):
+def calculate_stress_error(sigh, u_ex, pi_1, ktD_tilde, norm="l2", degree_raise=3):
     # Approximation details
     quad_degree = uh.function_space.ufl_element().degree() + degree_raise
     domain = uh.function_space.mesh
 
     # The exact stress
-    sig_ex = exact_stress(u_ex, p_ex, pi_1)
+    sig_ex = exact_solidstress(u_ex, pi_1, ktD_tilde)
 
     # Recast tensor form of sigh
     sig = ufl.as_matrix([[sigh[0][0], sigh[0][1]], [sigh[1][0], sigh[1][1]]])
@@ -176,6 +176,11 @@ def exact_pressure(x):
     return b * ufl.sin(ufl.pi * x[0]) * ufl.sin(ufl.pi * x[1])
 
 
+def exact_solidstress(u_ex, pi_1, ktD_tilde):
+    EtS = ufl.sym(ufl.grad(u_ex))
+    return ktD_tilde * (2 * EtS + pi_1 * ufl.div(u_ex) * ufl.Identity(2))
+
+
 def exact_stress(u_ex, p_ex, pi_1):
     EtS = ufl.sym(ufl.grad(u_ex))
     return 2 * EtS + pi_1 * ufl.div(u_ex) * ufl.Identity(2) - p_ex * ufl.Identity(2)
@@ -212,10 +217,9 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
     P_p = basix.ufl.element("Lagrange", domain.basix_cell(), sdisc_eorder)
     P_sig = basix.ufl.element("RT", domain.basix_cell(), sdisc_eorder)
     P_wfs = basix.ufl.element("RT", domain.basix_cell(), sdisc_eorder)
-    P_l2 = basix.ufl.element("DG", domain.basix_cell(), 0, shape=(2,))
 
     V = dfem.functionspace(
-        domain, basix.ufl.mixed_element([P_u, P_p, P_sig, P_sig, P_wfs, P_l2])
+        domain, basix.ufl.mixed_element([P_u, P_p, P_sig, P_sig, P_wfs])
     )
 
     # Solution and history functions
@@ -223,8 +227,8 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
 
     # --- Weak form
     # Trial- and test functions
-    u, p, sig1, sig2, wfs, l = ufl.TrialFunctions(V)
-    v_u, v_p, v_sig1, v_sig2, v_wfs, v_l = ufl.TestFunctions(V)
+    u, p, sig1, sig2, wfs = ufl.TrialFunctions(V)
+    v_u, v_p, v_sig1, v_sig2, v_wfs = ufl.TestFunctions(V)
 
     # Definition stress tensor
     sig = ufl.as_matrix([[sig1[0], sig1[1]], [sig2[0], sig2[1]]])
@@ -235,13 +239,12 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
         return ufl.sym(ufl.grad(u))
 
     # Definition constitutive laws
-    def EtS_sig(sig, p, pi_1):
+    def EtS_sig(sig, pi_1):
         h_pi1 = 2 * (pi_1 + 1)
 
         A_sig = 0.5 * (sig - (pi_1 / h_pi1) * ufl.tr(sig) * ufl.Identity(2))
-        corr_p = (1 / h_pi1) * p * ufl.Identity(2)
 
-        return A_sig + corr_p
+        return A_sig
 
     # RHS for manufactured solution
     rhs_blm = ufl.div(sig_ext)
@@ -254,11 +257,13 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
         ufl.inner(ufl.div(u) + ufl.div(wfs) - rhs_bmo, ufl.div(v_u) + ufl.div(v_wfs))
         + ufl.inner(ktD_tilde * ufl.grad(p) + wfs, ktD_tilde * ufl.grad(v_p) + v_wfs)
         + ufl.inner(
-            EtS_u(u) - EtS_sig(sig, p, pi_1),
-            EtS_u(v_u) - EtS_sig(v_sig, v_p, pi_1),
+            ktD_tilde * EtS_u(u) - EtS_sig(sig, pi_1),
+            ktD_tilde * EtS_u(v_u) - EtS_sig(v_sig, pi_1),
         )
-        + ufl.inner(ufl.div(sig) - rhs_blm, v_l)
-        + ufl.inner(l, ufl.div(v_sig))
+        + ufl.inner(
+            ufl.div(sig) - ktD_tilde * (rhs_blm + ufl.grad(p)),
+            ufl.div(v_sig) - ktD_tilde * ufl.grad(v_p),
+        )
     ) * dvol
 
     a = dfem.form(ufl.lhs(res))
@@ -330,10 +335,6 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
     # Evaluate error
     sig_h = ufl.as_matrix([[uh_sig1[0], uh_sig1[1]], [uh_sig2[0], uh_sig2[1]]])
 
-    form_err_divsig = dfem.form(
-        ufl.inner(ufl.div(sig_h) - rhs_blm, ufl.div(sig_h) - rhs_blm) * dvol
-    )
-    form_rhsblm = dfem.form(ufl.inner(rhs_blm, rhs_blm) * dvol)
     form_lsfunc = dfem.form(
         (
             ufl.inner(
@@ -344,10 +345,13 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
                 ktD_tilde * ufl.grad(uh_p) + uh_wfs, ktD_tilde * ufl.grad(uh_p) + uh_wfs
             )
             + ufl.inner(
-                EtS_u(uh_u) - EtS_sig(sig_h, uh_p, pi_1),
-                EtS_u(uh_u) - EtS_sig(sig_h, uh_p, pi_1),
+                ktD_tilde * EtS_u(uh_u) - EtS_sig(sig_h, pi_1),
+                ktD_tilde * EtS_u(uh_u) - EtS_sig(sig_h, pi_1),
             )
-            + ufl.inner(ufl.div(sig_h) - rhs_blm, ufl.div(sig_h) - rhs_blm)
+            + ufl.inner(
+                ufl.div(sig_h) - ktD_tilde * (rhs_blm + ufl.grad(uh_p)),
+                ufl.div(sig_h) - ktD_tilde * (rhs_blm + ufl.grad(uh_p)),
+            )
         )
         * dvol
     )
@@ -355,16 +359,7 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
     lsfunc_local = dfem.assemble_scalar(form_lsfunc)
     lsfunc_global = domain.comm.allreduce(lsfunc_local, op=MPI.SUM)
 
-    error_divsig_local = dfem.assemble_scalar(form_err_divsig)
-    resblm_local = dfem.assemble_scalar(form_rhsblm)
-    error_divsig_global = domain.comm.allreduce(error_divsig_local, op=MPI.SUM)
-    resblm_global = domain.comm.allreduce(resblm_local, op=MPI.SUM)
-
-    print(
-        "Error stress (pure/normalised): {}, {} | LS functional: {}".format(
-            error_divsig_global, error_divsig_global / resblm_global, lsfunc_global
-        )
-    )
+    print("LS functional: {}".format(lsfunc_global))
 
     # Output results
     if not supress_paraview:
@@ -415,7 +410,7 @@ for n in range(0, sdisc_nref):
     results[n, 2] = calculate_error(sub_u, u_ext, norm="h1")
     results[n, 4] = calculate_error(sub_p, p_ext, norm="h1")
     results[n, 6] = calculate_stress_error(
-        [sub_sig1, sub_sig2], u_ext, p_ext, pi_1, norm="hdiv"
+        [sub_sig1, sub_sig2], u_ext, pi_1, ktD_tilde, norm="hdiv"
     )
     results[n, 8] = calculate_error(
         sub_wtfs, exact_seepage(u_ext, p_ext, ktD_tilde), norm="hdiv"
@@ -440,7 +435,7 @@ results[1:, 11] = np.log(results[1:, 10] / results[:-1, 10]) / np.log(
 )
 
 # Results to csv
-out_name = "convstudy_pi1-{}_ktD-{}".format(round(pi_1), ktD_tilde)
+out_name = "convstudy-mod2_pi1-{}_ktD-{}".format(round(pi_1), ktD_tilde)
 out_name = out_name.replace(".", "d")
 out_name += ".csv"
 
