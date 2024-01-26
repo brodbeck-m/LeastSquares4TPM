@@ -382,12 +382,12 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde):
     outfile.write_function(pD, 0.0)
     outfile.close()
 
-    return uh, u_ext, p_ext
+    return uh, u_ext, p_ext, lsfunc_global
 
 
 # --- Convergence study ---
 # Initialise storage for results
-results = np.zeros((sdisc_nref, 10))
+results = np.zeros((sdisc_nref, 12))
 
 # Perform simulations
 for n in range(0, sdisc_nref):
@@ -398,7 +398,9 @@ for n in range(0, sdisc_nref):
     results[n, 1] = 1 / n_elmt
 
     # Solve problem
-    uh, u_ext, p_ext = solve_problem(n_elmt, sdisc_eorder, pi_1, ktD_tilde)
+    uh, u_ext, p_ext, value_lsfunc = solve_problem(
+        n_elmt, sdisc_eorder, pi_1, ktD_tilde
+    )
 
     # --- Evaluate errors,
     # Collapse function
@@ -417,6 +419,7 @@ for n in range(0, sdisc_nref):
     results[n, 8] = calculate_error_ufl(
         sub_wtfs, exact_seepage(u_ext, p_ext, ktD_tilde), norm="hdiv"
     )
+    results[n, 10] = value_lsfunc
 
 # Compute convergence rates
 results[1:, 3] = np.log(results[1:, 2] / results[:-1, 2]) / np.log(
@@ -431,13 +434,14 @@ results[1:, 7] = np.log(results[1:, 6] / results[:-1, 6]) / np.log(
 results[1:, 9] = np.log(results[1:, 8] / results[:-1, 8]) / np.log(
     results[1:, 1] / results[:-1, 1]
 )
+results[1:, 11] = np.log(results[1:, 10] / results[:-1, 10]) / np.log(
+    results[1:, 1] / results[:-1, 1]
+)
 
 # Results to csv
 out_name = "convstudy_pi1-{}_ktD-{}".format(round(pi_1), ktD_tilde)
 out_name = out_name.replace(".", "d")
 out_name += ".csv"
 
-header = (
-    "nelmt, h, err_u, rate_u, err_p, rate_p, err_sig, rate_sig, err_wtFS, rate_wtFS"
-)
+header = "nelmt, h, err_u, rate_u, err_p, rate_p, err_sig, rate_sig, err_wtFS, rate_wtFS, lsfunc, rate_lsfunc"
 np.savetxt(out_name, results, header=header, delimiter=",")
