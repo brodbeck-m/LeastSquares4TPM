@@ -176,10 +176,10 @@ P_u = basix.ufl.element("Lagrange", domain.basix_cell(), 1, shape=(2,))
 P_p = basix.ufl.element("Lagrange", domain.basix_cell(), 1)
 P_sig = basix.ufl.element("BDM", domain.basix_cell(), 1)
 P_wfs = basix.ufl.element("BDM", domain.basix_cell(), 1)
-P_l2 = basix.ufl.element("DG", domain.basix_cell(), 0)
+P_l2 = basix.ufl.element("DG", domain.basix_cell(), 0, shape=(2,))
 
 V = dfem.functionspace(
-    domain, basix.ufl.mixed_element([P_u, P_p, P_sig, P_sig, P_wfs, P_l2, P_l2])
+    domain, basix.ufl.mixed_element([P_u, P_p, P_sig, P_sig, P_wfs, P_l2])
 )
 
 V_u, uh_to_u = V.sub(0).collapse()
@@ -207,8 +207,8 @@ expr_sigma = dfem.Expression(
 
 # --- Set weak form
 # Trial- and test functions
-u, p, sig1, sig2, wfs, l1, l2 = ufl.TrialFunctions(V)
-v_u, v_p, v_sig1, v_sig2, v_wfs, v_l1, v_l2 = ufl.TestFunctions(V)
+u, p, sig1, sig2, wfs, l = ufl.TrialFunctions(V)
+v_u, v_p, v_sig1, v_sig2, v_wfs, v_l = ufl.TestFunctions(V)
 
 # Definition stress tensor
 sig = ufl.as_matrix([[sig1[0], sig1[1]], [sig2[0], sig2[1]]])
@@ -241,8 +241,8 @@ res = (
         EtS_u(u) - EtS_sig(sig, p, pi_1),
         EtS_u(v_u) - EtS_sig(v_sig, v_p, pi_1),
     )
-    + ufl.inner(ufl.div(sig), ufl.as_vector([v_l1, v_l2]))
-    + ufl.inner(ufl.as_vector([l1, l2]), ufl.div(v_sig))
+    + ufl.inner(ufl.div(sig), v_l)
+    + ufl.inner(l, ufl.div(v_sig))
 ) * dvol
 
 a = dfem.form(ufl.lhs(res))
