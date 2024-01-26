@@ -224,7 +224,7 @@ def EtS_u(u):
 def EtS_sig(sig, p, pi_1):
     h_pi1 = 2 * (pi_1 + 1)
 
-    A_sig = 0.5 * (sig - (pi_1 / (2 * h_pi1)) * ufl.tr(sig) * ufl.Identity(2))
+    A_sig = 0.5 * (sig - (pi_1 / h_pi1) * ufl.tr(sig) * ufl.Identity(2))
     corr_p = (1 / h_pi1) * p * ufl.Identity(2)
 
     return A_sig + corr_p
