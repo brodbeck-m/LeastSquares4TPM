@@ -15,6 +15,7 @@ import dolfinx.mesh as dmesh
 # --- Input parameters ---
 # Material
 nuhS = 0.25
+ktD_tilde = 1.0e-3
 
 # Discretisation
 sdisc_eorder = 1
@@ -22,9 +23,11 @@ sdisc_eorder = 1
 sdisc_nelmt = 2
 sdisc_nref = 8
 
+# Weights
+alpha = [1.0, 1 / ktD_tilde, 1.0, 1.0]
+
 # --- Auxiliaries ---
 pi_1 = 2 * nuhS / (1 - 2 * nuhS)
-ktD_tilde = 1.0
 
 
 # Interpolate ufl-function into dolfinx-function
@@ -186,7 +189,9 @@ def exact_seepage(u_ex, p_ex, ktD_tilde):
 
 
 # --- Numerical solution ---
-def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=True):
+def solve_problem(
+    sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, alpha, supress_paraview=True
+):
     # --- Create mesh
     # The mesh
     domain = dmesh.create_unit_square(
@@ -250,15 +255,23 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
     # Definition weak form
     dvol = ufl.Measure("dx", domain=domain, metadata={"quadrature_degree": 10})
 
+    a1 = alpha[0]
+    a2 = alpha[1]
+    a3 = alpha[2]
+    a4 = alpha[3]
+
     res = (
-        ufl.inner(ufl.div(u) + ufl.div(wfs) - rhs_bmo, ufl.div(v_u) + ufl.div(v_wfs))
-        + ufl.inner(ktD_tilde * ufl.grad(p) + wfs, ktD_tilde * ufl.grad(v_p) + v_wfs)
-        + ufl.inner(
+        a1
+        * ufl.inner(ufl.div(u) + ufl.div(wfs) - rhs_bmo, ufl.div(v_u) + ufl.div(v_wfs))
+        + a2
+        * ufl.inner(ktD_tilde * ufl.grad(p) + wfs, ktD_tilde * ufl.grad(v_p) + v_wfs)
+        + a3
+        * ufl.inner(
             EtS_u(u) - EtS_sig(sig, p, pi_1),
             EtS_u(v_u) - EtS_sig(v_sig, v_p, pi_1),
         )
-        + ufl.inner(ufl.div(sig) - rhs_blm, v_l)
-        + ufl.inner(l, ufl.div(v_sig))
+        + a4 * ufl.inner(ufl.div(sig) - rhs_blm, v_l)
+        + a4 * ufl.inner(l, ufl.div(v_sig))
     ) * dvol
 
     a = dfem.form(ufl.lhs(res))
@@ -336,18 +349,21 @@ def solve_problem(sdisc_nelmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=T
     form_rhsblm = dfem.form(ufl.inner(rhs_blm, rhs_blm) * dvol)
     form_lsfunc = dfem.form(
         (
-            ufl.inner(
+            a1
+            * ufl.inner(
                 ufl.div(uh_u) + ufl.div(uh_wfs) - rhs_bmo,
                 ufl.div(uh_u) + ufl.div(uh_wfs) - rhs_bmo,
             )
-            + ufl.inner(
+            + a2
+            * ufl.inner(
                 ktD_tilde * ufl.grad(uh_p) + uh_wfs, ktD_tilde * ufl.grad(uh_p) + uh_wfs
             )
-            + ufl.inner(
+            + a3
+            * ufl.inner(
                 EtS_u(uh_u) - EtS_sig(sig_h, uh_p, pi_1),
                 EtS_u(uh_u) - EtS_sig(sig_h, uh_p, pi_1),
             )
-            + ufl.inner(ufl.div(sig_h) - rhs_blm, ufl.div(sig_h) - rhs_blm)
+            + a4 * ufl.inner(ufl.div(sig_h) - rhs_blm, ufl.div(sig_h) - rhs_blm)
         )
         * dvol
     )
@@ -400,7 +416,7 @@ for n in range(0, sdisc_nref):
 
     # Solve problem
     uh, u_ext, p_ext, value_lsfunc = solve_problem(
-        n_elmt, sdisc_eorder, pi_1, ktD_tilde, supress_paraview=True
+        n_elmt, sdisc_eorder, pi_1, ktD_tilde, alpha, supress_paraview=True
     )
 
     # --- Evaluate errors,
@@ -440,7 +456,7 @@ results[1:, 11] = np.log(results[1:, 10] / results[:-1, 10]) / np.log(
 )
 
 # Results to csv
-out_name = "convstudy_pi1-{}_ktD-{}".format(round(pi_1), ktD_tilde)
+out_name = "convstudy-mod1_pi1-{}_ktD-{}".format(round(pi_1), ktD_tilde)
 out_name = out_name.replace(".", "d")
 out_name += ".csv"
 

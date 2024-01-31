@@ -16,15 +16,16 @@ from dolfinx.mesh import CellType, DiagonalType, create_rectangle
 
 # --- Input parameters ---
 # Material
-pi_1 = 1
-
-# Id for incompressible problem
-is_incomp = True
+pi_1 = 0
 
 # Discretisation
 sdisc_nelmt = [9, 72]
-# sdisc_nelmt = [9 * 3, 72 * 3]
-tdisc_dt = 0.005
+
+tdisc_dt = 0.001
+tdisc_ndt = 10
+
+# Weights
+alpha = [1.0, 1 / tdisc_dt, 1.0, 1.0]
 
 # Load
 bc_qtop = -0.1
@@ -234,15 +235,21 @@ def EtS_sig(sig, p, pi_1):
 dt = tdisc_dt
 dvol = ufl.dx
 
+a1 = alpha[0]
+a2 = alpha[1]
+a3 = alpha[2]
+a4 = alpha[3]
+
 res = (
-    ufl.inner(ufl.div(u - uh_n) + ufl.div(wfs), ufl.div(v_u) + ufl.div(v_wfs))
-    + ufl.inner(dt * ufl.grad(p) + wfs, dt * ufl.grad(v_p) + v_wfs)
-    + ufl.inner(
+    a1 * ufl.inner(ufl.div(u - uh_n) + ufl.div(wfs), ufl.div(v_u) + ufl.div(v_wfs))
+    + a2 * ufl.inner(dt * ufl.grad(p) + wfs, dt * ufl.grad(v_p) + v_wfs)
+    + a3
+    * ufl.inner(
         EtS_u(u) - EtS_sig(sig, p, pi_1),
         EtS_u(v_u) - EtS_sig(v_sig, v_p, pi_1),
     )
-    + ufl.inner(ufl.div(sig), v_l)
-    + ufl.inner(l, ufl.div(v_sig))
+    + a4 * ufl.inner(ufl.div(sig), v_l)
+    + a4 * ufl.inner(l, ufl.div(v_sig))
 ) * dvol
 
 a = dfem.form(ufl.lhs(res))
@@ -284,7 +291,7 @@ outfile.write_mesh(domain)
 
 # Time loop
 duration_solve = 0.0
-for n in range(10):
+for n in range(tdisc_ndt):
     # Update time
     time = time + tdisc_dt
 
